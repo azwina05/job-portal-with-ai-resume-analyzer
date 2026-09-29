@@ -25,27 +25,63 @@ app.use(express.urlencoded({ extended: true }));
 const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",").map((v) => v.trim())
   : "*";
+
 app.use(cors({ origin: corsOrigin, credentials: true }));
 
+// Upload directory
 const uploadDir = process.env.UPLOAD_DIR || "uploads";
-app.use(`/${uploadDir}`, express.static(path.join(__dirname, "..", uploadDir)));
 
-app.get("/api/health", (_req, res) =>
-  res.json({ ok: true, service: "ai-job-portal-backend" })
-);
+// Serve uploaded files
+app.use("/uploads", express.static(uploadDir));
 
-app.use("/api/auth", authRoutes);
-app.use("/api/jobs", jobRoutes);
-app.use("/api/applications", applicationRoutes);
-app.use("/api/admin", adminRoutes);
+// Health check
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "ai-job-portal-backend",
+  });
+});
+
+// Connect to MongoDB before database-dependent API requests
+let dbPromise;
+
+const ensureDB = async (_req, _res, next) => {
+  try {
+    if (!dbPromise) {
+      dbPromise = connectDB();
+    }
+
+    await dbPromise;
+    next();
+  } catch (error) {
+    dbPromise = null;
+    next(error);
+  }
+};
+
+app.use("/api/auth", ensureDB, authRoutes);
+app.use("/api/jobs", ensureDB, jobRoutes);
+app.use("/api/applications", ensureDB, applicationRoutes);
+app.use("/api/admin", ensureDB, adminRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
 
+// Export Express app for Vercel
+export default app;
+
+// Local development server
 const PORT = process.env.PORT || 5000;
 
-connectDB().then(() => {
-  app.listen(PORT, "0.0.0.0", () =>
-  console.log(`API running on port ${PORT}`)
-);
-});
+if (process.env.NODE_ENV !== "production") {
+  connectDB()
+    .then(() => {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`API running on port ${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("Database connection failed:", error);
+      process.exit(1);
+    });
+}
